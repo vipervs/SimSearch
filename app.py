@@ -96,13 +96,10 @@ st.title("arXiv Paper Similarty Search")
 
 query = st.text_input("Search Query")
 
-# List all .csv files in the 'arxiv' directory
 files = glob('arxiv/*.csv')
-
-past_search = st.sidebar.radio("Last searches: ", files)
+past_search = st.sidebar.radio("Last searches: ", [os.path.basename(file).replace('.csv', '') for file in files])
 
 if st.button('Search'):
-
     chat_completion = client.chat.completions.create(
         messages=[
             {
@@ -127,7 +124,7 @@ if st.button('Search'):
             st.write(f"Summary: {summary}")
             st.write(f"URL: {url}")
             st.write(f"Relatedness Score: {score:.2f}")
-            st.write("---")
+            st.write("---") 
 
 if st.sidebar.button('Load Past Search'):
     results = titles_ranked_by_relatedness(past_search.replace('arxiv/', '').replace('.csv', ''))
@@ -140,4 +137,6 @@ if st.sidebar.button('Load Past Search'):
         st.write("---")
 
 if st.sidebar.button('Delete Selected Search'):
-    os.remove(past_search)
+    os.remove(os.path.join('arxiv', past_search + '.csv')) # Delete the selected search
+    st.rerun() # Re-run this script to update sidebar 
+
