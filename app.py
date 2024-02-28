@@ -72,8 +72,43 @@ def google_custom_search(query):
     response.raise_for_status()
     json_data = response.json()
     items = json_data.get("items", [])
-    results = [{"title": item["title"], "link": item["link"]} for item in items]
-    return results[:20]  # Limit to 10 results
+    results = [{"title": item["title"], "link": item["link"], "snippet": item.get("snippet")} for item in items]
+    return results[:10] 
+
+def google_custom_search(query):
+    api_url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        'q': query,
+        'key': os.getenv('GOOGLE_CSE_KEY'),
+        'cx': os.getenv('GOOGLE_CSE_ID')
+    }
+    headers = {'Accept': 'application/json'}
+    response = requests.get(api_url, params=params, headers=headers)
+    response.raise_for_status()
+    json_data = response.json()
+    items = json_data.get("items", [])
+
+    results = []
+    with open(f'cse/{query}.csv', "w") as f_object:
+        csv_writer = writer(f_object)
+        csv_writer.writerow(["title", "link", "snippet", "embedding"])  # Header row
+
+        for item in items:
+            title = item["title"]
+            link = item["link"]
+            snippet = item.get("snippet")
+
+            title_embedding = embedding_request(title).data[0].embedding
+
+            result = {
+                "title": title, 
+                "link": link, 
+                "snippet": snippet
+            }
+            csv_writer.writerow([title, link, snippet, json.dumps(title_embedding)]) 
+            results.append(result)
+
+    return results[:10]  
 
 def titles_ranked_by_relatedness(query):
   query_embedding = embedding_request(query).data[0].embedding
@@ -155,6 +190,7 @@ if st.button('Search'):
             st.subheader("Google CSE Results")  
             for i, result in enumerate(google_results, start=1):
                 st.subheader(f"Result {i}: {result['title']}")
+                st.write(f"Snippet: {result['snippet']}")
                 st.write(f"URL: {result['link']}")
                 st.write("---") 
 
