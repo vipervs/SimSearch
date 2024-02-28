@@ -29,9 +29,9 @@ def arxiv_search(query):
     )
     result_list = []
 
-    with open(f"arxiv/{query}.csv", "w") as f_object:  
+    with open(f"arxiv/{query}.csv", "w") as f_object:
         writer_object = writer(f_object)
-        f_object.close()
+        f_object.close() 
 
     for result in client.results(search):
         result_dict = {}
