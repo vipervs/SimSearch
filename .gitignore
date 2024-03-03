@@ -16,6 +16,7 @@ author_storage/**/*
 docs/autogen
 groupchat
 storage
+.DS_Store
 NEW_TEST_DIR
 TEST_DIR
 OAI_CONFIG_LIST.json
