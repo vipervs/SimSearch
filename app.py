@@ -10,17 +10,23 @@ from dotenv import load_dotenv
 from glob import glob
 import requests
 
+# Load environment variables
 load_dotenv()
+
+# Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Function for making an embedding request
 def embedding_request(text):
     response = client.embeddings.create(
         input=text, model="text-embedding-3-small")
     return response
 
+# Function to calculate relatedness between two vectors
 def relatedness_function(a, b):
     return 1 - spatial.distance.cosine(a, b)
 
+# Function to search arXiv for academic papers
 def arxiv_search(query):
     client = arxiv.Client()
     search = arxiv.Search(
@@ -28,38 +34,29 @@ def arxiv_search(query):
         max_results=10
     )
     result_list = []
-
     with open(f"arxiv/{query}.csv", "w") as f_object:
         writer_object = writer(f_object)
-        f_object.close() 
-
-    for result in client.results(search):
-        result_dict = {}
-        result_dict.update({"title": result.title})
-        result_dict.update({"summary": result.summary})
-        result_dict.update({"article_url": [x.href for x in result.links][0]})
-        result_dict.update({"pdf_url": [x.href for x in result.links][1]})
-        result_dict.update({"published": result.published.strftime("%Y-%m-%d")})
-
-        result_list.append(result_dict)
-
-        title_embedding = embedding_request(result.title).data[0].embedding
-
-        row = [
-            result.title,
-            result.summary,
-            result_dict["published"],
-            result_dict["pdf_url"],
-            title_embedding
-        ]
-
-        with open(f'arxiv/{query}.csv', "a") as f_object:  
-            writer_object = writer(f_object)
+        for result in client.results(search):
+            result_dict = {
+                "title": result.title,
+                "summary": result.summary,
+                "article_url": [x.href for x in result.links][0],
+                "pdf_url": [x.href for x in result.links][1],
+                "published": result.published.strftime("%Y-%m-%d")
+            }
+            result_list.append(result_dict)
+            title_embedding = embedding_request(result.title).data[0].embedding
+            row = [
+                result.title,
+                result.summary,
+                result_dict["published"],
+                result_dict["pdf_url"],
+                title_embedding
+            ]
             writer_object.writerow(row)
-            f_object.close()
-
     return result_list
 
+# Function to search Google Custom Search
 def google_custom_search(query):
     api_url = "https://www.googleapis.com/customsearch/v1"
     params = {
@@ -72,59 +69,54 @@ def google_custom_search(query):
     response.raise_for_status()
     json_data = response.json()
     items = json_data.get("items", [])
-    results = [{"title": item["title"], "link": item["link"], "snippet": item.get("snippet")} for item in items]
-    return results[:10] 
-
-def google_custom_search(query):
-    api_url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        'q': query,
-        'key': os.getenv('GOOGLE_CSE_KEY'),
-        'cx': os.getenv('GOOGLE_CSE_ID')
-    }
-    headers = {'Accept': 'application/json'}
-    response = requests.get(api_url, params=params, headers=headers)
-    response.raise_for_status()
-    json_data = response.json()
-    items = json_data.get("items", [])
-
     results = []
     with open(f'cse/{query}.csv', "w") as f_object:
-        csv_writer = writer(f_object)
-        csv_writer.writerow(["title", "link", "snippet", "embedding"])  # Header row
-
+        csv_writer = writer(f_object) 
         for item in items:
             title = item["title"]
             link = item["link"]
             snippet = item.get("snippet")
-
             title_embedding = embedding_request(title).data[0].embedding
-
             result = {
                 "title": title, 
                 "link": link, 
-                "snippet": snippet
+                "snippet": snippet,
+                "title_embedding": title_embedding
             }
             csv_writer.writerow([title, link, snippet, json.dumps(title_embedding)]) 
             results.append(result)
+    return results
 
-    return results[:10]  
+# Function to rank titles based on relatedness
+def titles_ranked_by_relatedness(query, source):
+    query_embedding = embedding_request(query).data[0].embedding
 
-def titles_ranked_by_relatedness(query):
-  query_embedding = embedding_request(query).data[0].embedding
-  df = pd.read_csv(f'arxiv/{query}.csv', header=None)  
-  strings_and_relatedness = [
-      (row[0], row[1], row[2], row[3], relatedness_function(query_embedding, json.loads(row[4]))) for i, row in df.iterrows()
-  ]
+    if source == "arXiv":
+        df = pd.read_csv(f'arxiv/{query}.csv', header=None)  
+        strings_and_relatedness = [
+            (row[0], row[1], row[2], row[3], relatedness_function(query_embedding, json.loads(row[4]))) 
+            for i, row in df.iterrows()
+        ]
+        strings_and_relatedness.sort(key=lambda x: x[4], reverse=True)
+    elif source == "CSE":
+        df = pd.read_csv(f'cse/{query}.csv', header=None)  
+        strings_and_relatedness = [ 
+            (row[0], row[1], row[2], relatedness_function(query_embedding, json.loads(row[3]))) 
+            for i, row in df.iterrows()
+        ]
+        strings_and_relatedness.sort(key=lambda x: x[3], reverse=True)
+    else:
+        raise ValueError(f"Invalid source: {source}")  # Handle unknown sources
 
-  strings_and_relatedness.sort(key=lambda x: x[4], reverse=True)
+    return strings_and_relatedness
 
-  return strings_and_relatedness
-
-def fetch_articles_and_return_summary(description):
+# Function to fetch articles and return summaries
+def fetch_articles_and_return_summary(description, source):
     arxiv_search(description)
-    return titles_ranked_by_relatedness(description)
+    google_custom_search(description)
+    return titles_ranked_by_relatedness(description, source) 
 
+# Definition of tools for chat completion
 tools = [
     {
         "type": "function",
@@ -136,7 +128,7 @@ tools = [
                 "properties": {
                     "keywords": {
                         "type": "string",
-                        "description": "Some keywords that can be used for a Arxiv search based on the user's query"
+                        "description": "5 - 10 Boolean keywords that can be used for a scientific search based on the user's query"
                     }
                 },
                 "required": ["keywords"]
@@ -145,67 +137,88 @@ tools = [
     },
 ]
 
-st.title("Paper Similarty Search")
-query = st.text_input("Search Query")
-files = glob('arxiv/*.csv')
-past_search = st.sidebar.radio("Last searches: ", [os.path.basename(file).replace('.csv', '') for file in files])
+st.set_page_config(page_title="✨ Paper Similarity Search 🔬")
+st.title("✨ Paper Similarity Search 🔬")
 
-search_engine = st.sidebar.selectbox("Select Search Engine:", ["arXiv", "CSE"])
+search_engine = st.selectbox("Select Search Engine:", ["arXiv", "CSE"])
+with st.form('search_form'):
+    query = st.text_area('Enter text:', max_chars=100)
+    if st.form_submit_button('Search'):
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": query
+                }
+            ],
+            model="gpt-3.5-turbo",
+            tools=tools
+        )
+        print(chat_completion)
+        tool_call = chat_completion.choices[0].message.tool_calls[0]
+        function_name = tool_call.function.name
+        arguments = tool_call.function.arguments
 
-if st.button('Search'):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": query
+        if function_name == "fetch_articles_and_return_summary":
+            keywords = json.loads(arguments)['keywords']
+            if search_engine == "arXiv":
+                st.subheader("ArXiv Results")
+                with st.spinner("Searching arXiv Database..."):
+                    results = fetch_articles_and_return_summary(keywords, source="arXiv") 
+                for i, result in enumerate(results, start=1):
+                    title, summary, published, url, score = result  
+                    st.subheader(f"Result {i}: {title}")
+                    st.write(f"Summary: {summary}")
+                    st.write(f"Published: {published}")
+                    st.write(f"URL: {url}")
+                    st.write(f"Relatedness Score: {score:.2f}")
+                    st.write("---") 
+            elif search_engine == "CSE":
+                st.subheader("Google CSE Results")
+                with st.spinner("Searching Google CSE..."):
+                    results = fetch_articles_and_return_summary(keywords, source="CSE")
+                for i, result in enumerate(results, start=1):
+                    title, snippet, url, score = result 
+                    st.subheader(f"Result {i}: {title}")
+                    st.write(f"Snippet: {snippet}")
+                    st.write(f"URL: {url}")
+                    st.write(f"Relatedness Score: {score:.2f}") 
+                    st.write("---") 
 
-            }
-        ],
-        model="gpt-3.5-turbo",
-        tools=tools
-    )
+# Sidebar sections
+past_searches = glob('arxiv/*.csv') + glob('cse/*.csv')  # Combine search lists
+past_searches_with_folder = [(os.path.dirname(file), os.path.basename(file)) for file in past_searches]
+past_search_options = [(folder, file) for folder, file in past_searches_with_folder]
+past_search = st.sidebar.radio("Past Searches:", past_search_options, format_func=lambda option: f"{option[0]}/{option[1]}")
 
-    tool_call = chat_completion.choices[0].message.tool_calls[0]
-    function_name = tool_call.function.name
-    arguments = tool_call.function.arguments
-
-    if function_name == "fetch_articles_and_return_summary": 
-        keywords = json.loads(arguments)['keywords']
-
-        if search_engine == "arXiv":
-            results = fetch_articles_and_return_summary(keywords)
-            for i, result in enumerate(results, start=1):
-                title, summary, published, url, score = result
-                st.subheader(f"Result {i}: {title}")
-                st.write(f"Summary: {summary}")
-                st.write(f"Published: {published}")
-                st.write(f"URL: {url}")
-                st.write(f"Relatedness Score: {score:.2f}")
-                st.write("---") 
-
-        elif search_engine == "CSE":
-            with st.spinner("Searching Google CSE..."):
-                google_results = google_custom_search(keywords)
-
-            st.subheader("Google CSE Results")  
-            for i, result in enumerate(google_results, start=1):
-                st.subheader(f"Result {i}: {result['title']}")
-                st.write(f"Snippet: {result['snippet']}")
-                st.write(f"URL: {result['link']}")
-                st.write("---") 
-
-if st.sidebar.button('Load Past Search'): # Loads the results of a previous search
-    results = titles_ranked_by_relatedness(past_search.replace('arxiv/', '').replace('.csv', ''))
-    for i, result in enumerate(results, start=1):
-        title, summary, published, url, score = result  
-        st.subheader(f"Result {i}: {title}")
-        st.write(f"Summary: {summary}")
-        st.write(f"Published: {published}")
-        st.write(f"URL: {url}")
-        st.write(f"Relatedness Score: {score:.2f}")
-        st.write("---")
+if st.sidebar.button('Load Past Search'):
+    selected_folder, selected_filename = past_search  # Unpack the tuple
+    if selected_folder == 'arxiv':  # Compare the folder 
+        source = 'arXiv'
+        query = selected_filename.replace('.csv', '')  # Use just the filename
+        results = titles_ranked_by_relatedness(query, source) 
+        for i, result in enumerate(results, start=1):
+            title, summary, published, url, score = result  
+            st.subheader(f"Result {i}: {title}")
+            st.write(f"Summary: {summary}")
+            st.write(f"Published: {published}")
+            st.write(f"URL: {url}")
+            st.write(f"Relatedness Score: {score:.2f}")
+            st.write("---")
+    elif selected_folder == 'cse':
+        source = 'CSE'
+        query = selected_filename.replace('.csv', '')  # Use just the filename
+        results = titles_ranked_by_relatedness(query, source) 
+        for i, result in enumerate(results, start=1):
+            title, link, snippet, score = result  
+            st.subheader(f"Result {i}: {title}")
+            st.write(f"Snippet: {snippet}")
+            st.write(f"URL: {link}")
+            st.write(f"Relatedness Score: {score:.2f}")
+            st.write("---") 
 
 if st.sidebar.button('Delete Selected Search'):
-    os.remove(os.path.join('arxiv', past_search + '.csv')) 
-    st.rerun() 
-
+    selected_folder, selected_filename = past_search  # Unpack tuple
+    path = os.path.join(selected_folder, selected_filename)  # Construct path
+    os.remove(path)
+    st.rerun()

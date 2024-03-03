@@ -1,6 +1,7 @@
 .envrc
 .direnv
-/arxiv/
+/arxiv
+/cse
 */.streamlit/secrets.toml
 .mypy_cache
 __pycache__
