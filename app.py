@@ -112,8 +112,13 @@ def titles_ranked_by_relatedness(query, source):
 
 # Function to fetch articles and return summaries
 def fetch_articles_and_return_summary(description, source):
-    arxiv_search(description)
-    google_custom_search(description)
+    if source == "arXiv":
+        arxiv_search(description)
+    elif source == "CSE":
+        google_custom_search(description)
+    else: 
+        raise ValueError(f"Invalid source: {source}")
+
     return titles_ranked_by_relatedness(description, source) 
 
 # Definition of tools for chat completion
@@ -154,7 +159,8 @@ with st.form('search_form'):
             model="gpt-3.5-turbo",
             tools=tools
         )
-        print(chat_completion)
+        print(f"User Query: {query}")
+        print(f"Chat completion: {chat_completion}")
         tool_call = chat_completion.choices[0].message.tool_calls[0]
         function_name = tool_call.function.name
         arguments = tool_call.function.arguments
