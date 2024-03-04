@@ -4,6 +4,7 @@ import pandas as pd
 import json
 import streamlit as st
 from csv import writer
+from rich import print as rich_print
 from openai import OpenAI
 from scipy import spatial
 from dotenv import load_dotenv
@@ -51,7 +52,7 @@ def arxiv_search(query):
                 result.summary,
                 result_dict["published"],
                 result_dict["pdf_url"],
-                title_embedding
+                title_embedding,
             ]
             writer_object.writerow(row)
     return result_list
@@ -76,14 +77,14 @@ def google_custom_search(query):
             title = item["title"]
             link = item["link"]
             snippet = item.get("snippet")
-            title_embedding = embedding_request(title).data[0].embedding
+            embedding = embedding_request(f"{title} {snippet}").data[0].embedding
             result = {
                 "title": title, 
                 "link": link, 
                 "snippet": snippet,
-                "title_embedding": title_embedding
+                "embedding": embedding
             }
-            csv_writer.writerow([title, link, snippet, json.dumps(title_embedding)]) 
+            csv_writer.writerow([title, link, snippet, json.dumps(embedding)]) 
             results.append(result)
     return results
 
@@ -127,13 +128,13 @@ tools = [
         "type": "function",
         "function": {
             "name": "fetch_articles_and_return_summary",
-            "description": "Use this function fetch papers and provide a summary for users",
+            "description": "Use this function to fetch papers from a scientific database and provide a summary for users. Expects keywords to be provided in a boolean format.", 
             "parameters": {
                 "type": "object",
                 "properties": {
                     "keywords": {
                         "type": "string",
-                        "description": "5 - 10 Boolean keywords that can be used for a scientific search based on the user's query"
+                        "description": "Keywords in a boolean format suitable for a scientific search. Example: (\"Artificial Intelligence\" OR \"AI\") AND (\"Public Health\" OR \"Global Health\")" 
                     }
                 },
                 "required": ["keywords"]
@@ -142,8 +143,8 @@ tools = [
     },
 ]
 
-st.set_page_config(page_title="✨ Paper Similarity Search 🔬")
-st.title("✨ Paper Similarity Search 🔬")
+st.set_page_config(page_title="Paper Similarity Search 🔬")
+st.title("Paper Similarity Search 🔬")
 
 search_engine = st.selectbox("Select Search Engine:", ["arXiv", "CSE"])
 with st.form('search_form'):
@@ -157,18 +158,21 @@ with st.form('search_form'):
                 }
             ],
             model="gpt-3.5-turbo",
-            tools=tools
+            tools=tools,
         )
         print(f"User Query: {query}")
-        print(f"Chat completion: {chat_completion}")
-        tool_call = chat_completion.choices[0].message.tool_calls[0]
+        rich_print(chat_completion)
+
+        tool_call = chat_completion.choices[0].message.tool_calls[0] 
         function_name = tool_call.function.name
         arguments = tool_call.function.arguments
+        print(f"\nExecuting function: {function_name} with parameters: {arguments}")
+        print(f"\nFunction Result: {chat_completion.choices[0].message.tool_calls[0]}")
 
         if function_name == "fetch_articles_and_return_summary":
             keywords = json.loads(arguments)['keywords']
             if search_engine == "arXiv":
-                st.subheader("ArXiv Results")
+                st.header(f"📚 ArXiv Results: {keywords}")
                 with st.spinner("Searching arXiv Database..."):
                     results = fetch_articles_and_return_summary(keywords, source="arXiv") 
                 for i, result in enumerate(results, start=1):
@@ -180,7 +184,7 @@ with st.form('search_form'):
                     st.write(f"Relatedness Score: {score:.2f}")
                     st.write("---") 
             elif search_engine == "CSE":
-                st.subheader("Google CSE Results")
+                st.header(f"📚 Google CSE Results: {keywords}")
                 with st.spinner("Searching Google CSE..."):
                     results = fetch_articles_and_return_summary(keywords, source="CSE")
                 for i, result in enumerate(results, start=1):
@@ -202,7 +206,8 @@ if st.sidebar.button('Load Past Search'):
     if selected_folder == 'arxiv':  # Compare the folder 
         source = 'arXiv'
         query = selected_filename.replace('.csv', '')  # Use just the filename
-        results = titles_ranked_by_relatedness(query, source) 
+        results = titles_ranked_by_relatedness(query, source)
+        st.header(f"📚 ArXiv Results: {query}")
         for i, result in enumerate(results, start=1):
             title, summary, published, url, score = result  
             st.subheader(f"Result {i}: {title}")
@@ -215,6 +220,7 @@ if st.sidebar.button('Load Past Search'):
         source = 'CSE'
         query = selected_filename.replace('.csv', '')  # Use just the filename
         results = titles_ranked_by_relatedness(query, source) 
+        st.header(f"📚 CSE Results: {query}")
         for i, result in enumerate(results, start=1):
             title, link, snippet, score = result  
             st.subheader(f"Result {i}: {title}")
