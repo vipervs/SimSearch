@@ -4,24 +4,30 @@ import pandas as pd
 import json
 import streamlit as st
 from csv import writer
-from rich import print as rich_print
-from openai import OpenAI
+import ollama
 from scipy import spatial
 from dotenv import load_dotenv
 from glob import glob
 import requests
+import anthropic
 
-# Load environment variables
 load_dotenv()
-
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Function for making an embedding request
 def embedding_request(text):
-    response = client.embeddings.create(
-        input=text, model="text-embedding-3-small")
-    return response
+    response = ollama.embeddings(model='nomic-embed-text:latest', prompt=text)
+    if isinstance(response, list):
+        if isinstance(response[0], dict):
+            embedding = response[0].get('embedding')
+        else:
+            embedding = response[0]
+    elif isinstance(response, dict):
+        embedding = response.get('embedding')
+    else:
+        raise ValueError("Unexpected response format from ollama.embeddings")
+    #print(f"Ollama API response: {response}")
+    return embedding
 
 # Function to calculate relatedness between two vectors
 def relatedness_function(a, b):
@@ -35,38 +41,24 @@ def arxiv_search(query):
         max_results=10
     )
     result_list = []
-    with open(f"arxiv/{query}.csv", "w") as f_object:
+    with open(f"arxiv/{query}.csv", "w", newline='') as f_object:
         writer_object = writer(f_object)
+        query_embedding = embedding_request(query)
         for result in client.results(search):
+            title_embedding = embedding_request(result.title)
+            relatedness_score = relatedness_function(query_embedding, title_embedding)
             result_dict = {
                 "title": result.title,
                 "summary": result.summary,
                 "article_url": [x.href for x in result.links][0],
                 "pdf_url": [x.href for x in result.links][1],
-                "published": result.published.strftime("%Y-%m-%d")
+                "published": result.published.strftime("%Y-%m-%d"),
+                "relatedness_score": relatedness_score
             }
             result_list.append(result_dict)
-
-            # Calculate relatedness
-            query_embedding = embedding_request(query).data[0].embedding
-            title_embedding = embedding_request(result.title).data[0].embedding
-            relatedness_score = relatedness_function(query_embedding, title_embedding) 
-
-            # Update result_dict and the row written to CSV
-            result_dict["relatedness_score"] = relatedness_score
-            row = [
-                result.title,
-                result.summary,
-                result_dict["published"],
-                result_dict["pdf_url"],
-                title_embedding,
-                result_dict["relatedness_score"] 
-            ]
-            writer_object.writerow(row)
+            writer_object.writerow([result.title, result.summary, result_dict["published"], result_dict["pdf_url"], title_embedding, relatedness_score])
     return result_list
 
-
-# Function to search Google Custom Search
 def google_custom_search(query):
     api_url = "https://www.googleapis.com/customsearch/v1"
     params = {
@@ -88,9 +80,9 @@ def google_custom_search(query):
             snippet = item.get("snippet")
 
             # Calculate relatedness
-            query_embedding = embedding_request(query).data[0].embedding
+            query_embedding = embedding_request(query)
             text_for_embedding = f"{title} {snippet}"
-            embedding = embedding_request(text_for_embedding).data[0].embedding
+            embedding = embedding_request(text_for_embedding)
             relatedness_score = relatedness_function(query_embedding, embedding) 
 
             result = {
@@ -100,13 +92,13 @@ def google_custom_search(query):
                 "embedding": embedding,
                 "relatedness_score": relatedness_score
             }
-            csv_writer.writerow([title, link, snippet, json.dumps(embedding), relatedness_score])  # Add relatedness_score
+            csv_writer.writerow([title, link, snippet, json.dumps(embedding), relatedness_score])
             results.append(result)
     return results
 
 # Function to rank titles based on relatedness
 def titles_ranked_by_relatedness(query, source):
-    query_embedding = embedding_request(query).data[0].embedding
+    query_embedding = embedding_request(query)
 
     if source == "arXiv":
         df = pd.read_csv(f'arxiv/{query}.csv', header=None)  
@@ -127,89 +119,55 @@ def titles_ranked_by_relatedness(query, source):
 
     return strings_and_relatedness
 
-# Function to fetch articles and return summaries
-def fetch_articles_and_return_summary(description, source):
-    if source == "arXiv":
-        arxiv_search(description)
-    elif source == "CSE":
-        google_custom_search(description)
-    else: 
-        raise ValueError(f"Invalid source: {source}")
-
-    return titles_ranked_by_relatedness(description, source) 
-
-# Definition of tools for chat completion
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "fetch_articles_and_return_summary",
-            "description": "Use this function to fetch papers from a scientific database and provide a summary for users. Expects keywords to be provided in a boolean format.", 
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "keywords": {
-                        "type": "string",
-                        "description": "Keywords in a boolean format suitable for a scientific search. Example: (\"Artificial Intelligence\" OR \"AI\") AND (\"Public Health\" OR \"Global Health\")" 
-                    }
-                },
-                "required": ["keywords"]
-            }
-        }
-    },
-]
-
 st.set_page_config(page_title="Paper Similarity Search 🔬")
 st.title("Paper Similarity Search 🔬")
 
 search_engine = st.selectbox("Select Search Engine:", ["arXiv", "CSE"])
+
 with st.form('search_form'):
     query = st.text_area('Enter text:', max_chars=100)
     if st.form_submit_button('Search'):
-        chat_completion = client.chat.completions.create(
+        message = client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=50,
+            temperature=0,
             messages=[
                 {
                     "role": "user",
-                    "content": query
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Generate keywords for the following query in a boolean format suitable for a scientific search and return only the keywords,\n\n<query>{query}</query>"
+                        }
+                    ]
                 }
-            ],
-            model="gpt-3.5-turbo",
-            tools=tools,
+            ]
         )
-        print(f"User Query: {query}")
-        rich_print(chat_completion)
-
-        tool_call = chat_completion.choices[0].message.tool_calls[0] 
-        function_name = tool_call.function.name
-        arguments = tool_call.function.arguments
-        print(f"\nExecuting function: {function_name} with parameters: {arguments}")
-        print(f"\nFunction Result: {chat_completion.choices[0].message.tool_calls[0]}")
-
-        if function_name == "fetch_articles_and_return_summary":
-            keywords = json.loads(arguments)['keywords']
-            if search_engine == "arXiv":
-                st.header(f"📚 ArXiv Results: {keywords}")
-                with st.spinner("Searching arXiv Database..."):
-                    results = fetch_articles_and_return_summary(keywords, source="arXiv") 
-                for i, result in enumerate(results, start=1):
-                    title, summary, published, url, score = result  
-                    st.subheader(f"Result {i}: {title}")
-                    st.write(f"Summary: {summary}")
-                    st.write(f"Published: {published}")
-                    st.write(f"URL: {url}")
-                    st.write(f"Relatedness Score: {score:.2f}")
-                    st.write("---") 
-            elif search_engine == "CSE":
-                st.header(f"📚 Google CSE Results: {keywords}")
-                with st.spinner("Searching Google CSE..."):
-                    results = fetch_articles_and_return_summary(keywords, source="CSE")
-                for i, result in enumerate(results, start=1):
-                    title, snippet, url, score = result 
-                    st.subheader(f"Result {i}: {title}")
-                    st.write(f"Snippet: {snippet}")
-                    st.write(f"URL: {url}")
-                    st.write(f"Relatedness Score: {score:.2f}") 
-                    st.write("---") 
+        keywords = message.content[0].text
+        #print(f"Generated Keywords: {keywords}")
+        if search_engine == "arXiv":
+            st.header(f"📚 ArXiv Results: {keywords}")
+            with st.spinner("Searching arXiv Database..."):
+                results = arxiv_search(keywords)
+            for i, result in enumerate(results, start=1):
+                title, summary, published, url, score = result['title'], result['summary'], result['published'], result['pdf_url'], result['relatedness_score']
+                st.subheader(f"Result {i}: {title}")
+                st.write(f"Summary: {summary}")
+                st.write(f"Published: {published}")
+                st.write(f"URL: {url}")
+                st.write(f"Relatedness Score: {score:.2f}")
+                st.write("---")
+        elif search_engine == "CSE":
+            st.header(f"📚 Google CSE Results: {keywords}")
+            with st.spinner("Searching Google CSE..."):
+                results = google_custom_search(keywords)
+            for i, result in enumerate(results, start=1):
+                title, snippet, url, score = result['title'], result['snippet'], result['link'], result['relatedness_score']
+                st.subheader(f"Result {i}: {title}")
+                st.write(f"Snippet: {snippet}")
+                st.write(f"URL: {url}")
+                st.write(f"Relatedness Score: {score:.2f}")
+                st.write("---")
 
 # Sidebar sections
 st.sidebar.header("Past Searches 📚")
@@ -250,7 +208,7 @@ for source, searches in searches_by_source.items():
                     try:
                         os.remove(file_path)
                         st.success(f"Deleted: {search_label}")
-                        st.experimental_rerun()  # Rerun the app to update the sidebar
+                        st.rerun()  # Rerun the app to update the sidebar
                     except FileNotFoundError:
                         st.warning(f"File not found: {search_label}")
 
