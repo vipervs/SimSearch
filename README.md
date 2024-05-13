@@ -1,5 +1,7 @@
 # Paper Similarity Search 🔬
 
+![App Screenshot](interface.png)
+
 This project is a web application that allows users to search for academic papers and articles based on a given query. It utilizes the arXiv API and Google Custom Search Engine (CSE) to retrieve relevant results and ranks them based on their similarity to the query using embeddings and cosine similarity.
 
 ## Features
