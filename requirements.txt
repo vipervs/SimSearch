@@ -1,9 +1,9 @@
 arxiv
 pandas
-json
 streamlit
-openai
 scipy
-dotenv
-glob
+python-dotenv
 requests
+ollama
+langchain-core
+langchain-experimental

@@ -27,13 +27,11 @@ This project is a web application that allows users to search for academic paper
 1. Clone the repository
 2. pip install -r requirements.txt 
 3. Create a `.env` file in the project directory. 
-4. Obtain API keys for:
-    * OpenAI ([https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys))
+4. Obtain API key for:
     * Google Custom Search Engine ([https://developers.google.com/custom-search](https://developers.google.com/custom-search))
 5. Add the following to your `.env` file:
 
    ```
-   OPENAI_API_KEY=your_openai_api_key
    GOOGLE_CSE_KEY=your_cse_api_key
    GOOGLE_CSE_ID=your_cse_engine_id
    ```
