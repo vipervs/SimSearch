@@ -4,15 +4,20 @@ import pandas as pd
 import json
 import streamlit as st
 from csv import writer
-import ollama
 from scipy import spatial
 from dotenv import load_dotenv
 from glob import glob
 import requests
-import anthropic
+import ollama
+from langchain_core.prompts import PromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_experimental.llms.ollama_functions import OllamaFunctions
+
+# Pydantic Schema for structured response
+class Keywords(BaseModel):
+    keywords: str = Field(description="The generated keywords in boolean format")
 
 load_dotenv()
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Function for making an embedding request
 def embedding_request(text):
@@ -26,7 +31,7 @@ def embedding_request(text):
         embedding = response.get('embedding')
     else:
         raise ValueError("Unexpected response format from ollama.embeddings")
-    #print(f"Ollama API response: {response}")
+    print(f"Ollama API response: {response}")
     return embedding
 
 # Function to calculate relatedness between two vectors
@@ -56,7 +61,8 @@ def arxiv_search(query):
                 "relatedness_score": relatedness_score
             }
             result_list.append(result_dict)
-            writer_object.writerow([result.title, result.summary, result_dict["published"], result_dict["pdf_url"], title_embedding, relatedness_score])
+            writer_object.writerow([result.title, result.summary, result_dict["published"], result_dict["pdf_url"], relatedness_score])
+    result_list.sort(key=lambda x: x['relatedness_score'], reverse=True)
     return result_list
 
 def google_custom_search(query):
@@ -72,29 +78,35 @@ def google_custom_search(query):
     json_data = response.json()
     items = json_data.get("items", [])
     results = []
+    query_embedding = embedding_request(query)
+
+    for item in items:
+        title = item["title"]
+        link = item["link"]
+        snippet = item.get("snippet", "")
+
+        # Calculate relatedness
+        text_for_embedding = f"{title} {snippet}"
+        embedding = embedding_request(text_for_embedding)
+        relatedness_score = relatedness_function(query_embedding, embedding)
+
+        results.append({
+            "title": title,
+            "link": link,
+            "snippet": snippet,
+            "relatedness_score": relatedness_score
+        })
+
+    # Sort results by relatedness_score in descending order
+    sorted_results = sorted(results, key=lambda x: x['relatedness_score'], reverse=True)
+
+    # Write sorted results to csv
     with open(f'cse/{query}.csv', "w") as f_object:
-        csv_writer = writer(f_object) 
-        for item in items:
-            title = item["title"]
-            link = item["link"]
-            snippet = item.get("snippet")
-
-            # Calculate relatedness
-            query_embedding = embedding_request(query)
-            text_for_embedding = f"{title} {snippet}"
-            embedding = embedding_request(text_for_embedding)
-            relatedness_score = relatedness_function(query_embedding, embedding) 
-
-            result = {
-                "title": title, 
-                "link": link, 
-                "snippet": snippet,
-                "embedding": embedding,
-                "relatedness_score": relatedness_score
-            }
-            csv_writer.writerow([title, link, snippet, json.dumps(embedding), relatedness_score])
-            results.append(result)
-    return results
+        csv_writer = writer(f_object)
+        for result in sorted_results:
+            csv_writer.writerow([result['title'], result['snippet'], result['link'], result['relatedness_score']])
+    
+    return sorted_results
 
 # Function to rank titles based on relatedness
 def titles_ranked_by_relatedness(query, source):
@@ -124,27 +136,32 @@ st.title("Paper Similarity Search 🔬")
 
 search_engine = st.selectbox("Select Search Engine:", ["arXiv", "CSE"])
 
+# Prompt template for keyword generation
+prompt = PromptTemplate.from_template(
+    """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    You are a smart assistant that generates keywords for a given query in a boolean format suitable for a scientific search.
+    <|eot_id|><|start_header_id|>user<|end_header_id|>
+QUERY: {query} \n
+KEYWORDS:
+<|eot_id|>
+<|start_header_id|>assistant<|end_header_id|>
+ """
+)
+
+# Chain
+llm = OllamaFunctions(model="llama3:8b-instruct-q8_0", 
+                      format="json", 
+                      temperature=0)
+
+structured_llm = llm.with_structured_output(Keywords)
+chain = prompt | structured_llm
+
 with st.form('search_form'):
-    query = st.text_area('Enter text:', max_chars=100)
+    query = st.text_area('Enter text:', max_chars=250)
     if st.form_submit_button('Search'):
-        message = client.messages.create(
-            model="claude-3-sonnet-20240229",
-            max_tokens=50,
-            temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Generate keywords for the following query in a boolean format suitable for a scientific search and return only the keywords,\n\n<query>{query}</query>"
-                        }
-                    ]
-                }
-            ]
-        )
-        keywords = message.content[0].text
-        #print(f"Generated Keywords: {keywords}")
+        response = chain.invoke({"query": query})
+        keywords = response.keywords
+        print(f"Generated Keywords: {keywords}")
         if search_engine == "arXiv":
             st.header(f"📚 ArXiv Results: {keywords}")
             with st.spinner("Searching arXiv Database..."):
@@ -218,10 +235,10 @@ if 'load_arxiv_results' in st.session_state:
     file_path = os.path.join('arxiv', query + '.csv') 
     try:
         df = pd.read_csv(file_path, header=None)
-        df = df.sort_values(by=5, ascending=False)  
+        df = df.sort_values(by=4, ascending=False)  
         st.header(f"📚 ArXiv Results: {query}")
         for i, row in df.iterrows():
-            title, summary, published, url, embedding, score = row[0], row[1], row[2], row[3], row[4], row[5]
+            title, summary, published, url, score = row[0], row[1], row[2], row[3], row[4]
             st.subheader(f"Result {i + 1}: {title}")
             st.write(f"Summary: {summary}")
             st.write(f"Published: {published}")
@@ -238,10 +255,10 @@ if 'load_cse_results' in st.session_state:
     file_path = os.path.join('cse', query + '.csv') 
     try:
         df = pd.read_csv(file_path, header=None)
-        df = df.sort_values(by=4, ascending=False) 
+        df = df.sort_values(by=3, ascending=False) 
         st.header(f"📚 CSE Results: {query}")
         for i, row in df.iterrows():
-            title, link, snippet, embedding, score = row[0], row[1], row[2], row[3], row[4] 
+            title, snippet, link, score = row[0], row[1], row[2], row[3]
             st.subheader(f"Result {i + 1}: {title}")
             st.write(f"Snippet: {snippet}")
             st.write(f"URL: {link}")

@@ -1,27 +1,36 @@
-# Paper Similarity Search
+# Paper Similarity Search 🔬
 
-**Description**
+This project is a web application that allows users to search for academic papers and articles based on a given query. It utilizes the arXiv API and Google Custom Search Engine (CSE) to retrieve relevant results and ranks them based on their similarity to the query using embeddings and cosine similarity.
 
-This script combines the power of Arxiv, Google Custom Search, OpenAI's language models, and embedding technology to provide a streamlined paper discovery and similarity search tool.
+## Features
 
-**Features**
+- Search for academic papers on arXiv and articles using Google CSE
+- Generate keywords in boolean format for the given query using a language model
+- Calculate relatedness scores between the query and search results using embeddings
+- Display search results with titles, summaries, publication dates, URLs, and relatedness scores
+- Store past searches and allow users to revisit them
+- Delete past searches from the sidebar
 
-* **Arxiv Search:** Fetches relevant papers from Arxiv based on your search query. Stores results in a CSV file for easy access.
-* **Semantic Similarity:** Calculates semantic relatedness between your query and fetched research papers using OpenAI embeddings.
-* **Google Custom Search:** Provides additional search results from a wider web context using Google's Custom Search Engine (CSE). 
-* **Streamlit Integration:** Creates a user-friendly web interface for search and result display.
+## Technologies Used
 
-**Installation**
+- Python
+- Streamlit
+- arXiv API
+- Google Custom Search API
+- Ollama (for embeddings and language model)
+- Pandas
+- SciPy
+- Langchain
 
-1. pip install -r requirements.txt 
+## Setup
 
-**Setting Up Environment Variables**
-
-1. Create a `.env` file in the project directory. 
-2. Obtain API keys for:
+1. Clone the repository
+2. pip install -r requirements.txt 
+3. Create a `.env` file in the project directory. 
+4. Obtain API keys for:
     * OpenAI ([https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys))
     * Google Custom Search Engine ([https://developers.google.com/custom-search](https://developers.google.com/custom-search))
-3. Add the following to your `.env` file:
+5. Add the following to your `.env` file:
 
    ```
    OPENAI_API_KEY=your_openai_api_key
@@ -29,12 +38,23 @@ This script combines the power of Arxiv, Google Custom Search, OpenAI's language
    GOOGLE_CSE_ID=your_cse_engine_id
    ```
 
-**Usage**
+## Usage
 
-1. Run `streamlit run app.py` (assuming your main script is named `app.py`)
-2. Start searching! 
+1. Select the search engine (arXiv or Google CSE)
+2. Enter a query in the text area
+3. Click the "Search" button to retrieve relevant results
+4. View the search results with their titles, summaries, URLs, and relatedness scores
+5. Access past searches from the sidebar and revisit or delete them
 
-**Additional Notes**
+## Folder Structure
 
-* The script stores fetched results from Arxiv in CSV files within an 'arxiv' directory for convenient retrieval of past searches. 
-* The Streamlit interface provides options to search Arxiv directly or use Google CSE, as well as load past searches. 
+- `arxiv/`: Contains CSV files with past arXiv search results
+- `cse/`: Contains CSV files with past Google CSE search results
+
+## Contributing
+
+Contributions are welcome! If you find any issues or have suggestions for improvements, please open an issue or submit a pull request.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
