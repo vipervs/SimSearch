@@ -149,7 +149,7 @@ KEYWORDS:
 )
 
 # Chain
-llm = OllamaFunctions(model="llama3:8b-instruct-q8_0", 
+llm = OllamaFunctions(model="llama3", 
                       format="json", 
                       temperature=0)
 
@@ -157,7 +157,7 @@ structured_llm = llm.with_structured_output(Keywords)
 chain = prompt | structured_llm
 
 with st.form('search_form'):
-    query = st.text_area('Enter text:', max_chars=250)
+    query = st.text_area('Enter text:', max_chars=1000)
     if st.form_submit_button('Search'):
         response = chain.invoke({"query": query})
         keywords = response.keywords
